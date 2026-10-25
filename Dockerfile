@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/playwright/python:v1.49.0-jammy
+FROM mcr.microsoft.com/playwright/python:v1.64.1-jammy
 
 WORKDIR /app
 
@@ -8,7 +8,7 @@ ENV PYTHONUNBUFFERED=1
 # Install dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-RUN playwright install chromium
+RUN playwright install --with-deps chromium
 
 # Copy source code
 COPY . .
