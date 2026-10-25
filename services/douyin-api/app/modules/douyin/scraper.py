@@ -154,6 +154,12 @@ class DouyinScraper:
                     "--disable-setuid-sandbox",
                     "--disable-dev-shm-usage",
                     "--disable-gpu",
+                    "--mute-audio",
+                    "--no-zygote",
+                    "--disable-extensions",
+                    "--disable-component-update",
+                    "--disable-background-networking",
+                    "--disable-features=Translate,BackForwardCache,MediaRouter,OptimizationHints,AudioServiceOutOfProcess",
                     "--js-flags=--max-old-space-size=256",
                     "--disable-blink-features=AutomationControlled",
                 ],
@@ -231,6 +237,15 @@ class DouyinScraper:
                 await context.add_cookies(cookie_list)
 
             page = await context.new_page()
+
+            # Abort heavy media streaming (mp4/flv/m3u8) to save RAM and avoid OOM on Render Free (512MB)
+            async def intercept_route(route):
+                if route.request.resource_type in ["media"]:
+                    await route.abort()
+                else:
+                    await route.continue_()
+            await page.route("**/*", intercept_route)
+
             stealth = Stealth()
             await stealth.apply_stealth_async(page)
 
