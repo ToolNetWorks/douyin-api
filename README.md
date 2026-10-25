@@ -110,6 +110,25 @@ curl "http://162.4.177.109:8088/api/douyin/video/urls?url=https://v.douyin.com/K
 
 ---
 
+## ☁️ Hướng dẫn Deploy lên Render (render.com)
+
+Dự án đã có sẵn `Dockerfile` (sử dụng base image chính thức của Microsoft Playwright) và file cấu hình `render.yaml`.
+
+### Cách 1: Deploy qua giao diện Render (Khuyên dùng)
+1. Đăng nhập vào [Render.com](https://dashboard.render.com/).
+2. Nhấn **New +** $\rightarrow$ chọn **Web Service**.
+3. Kết nối tài khoản GitHub và chọn repository **`ToolNetWorks/douyin-api`**.
+4. Cấu hình dịch vụ:
+   * **Language / Runtime**: Chọn **Docker** (Render sẽ tự động đọc `Dockerfile`).
+   * **Region**: Singapore (hoặc Oregon/Frankfurt).
+   * **Instance Type**: Free (hoặc Starter).
+5. Thêm biến môi trường (**Environment Variables**):
+   * `PORT`: `10000` (Render tự động cấp)
+   * `DOUYIN_COOKIE` (Tùy chọn): Dán chuỗi cookie tài khoản Douyin vào đây nếu muốn Render tự động cào 200+ video mà khách không cần truyền cookie.
+6. Nhấn **Deploy Web Service** và đợi Render build xong là có ngay link public `https://<ten-app>.onrender.com`.
+
+---
+
 ## 🛠 Quản lý dịch vụ trên VPS
 
 ```bash

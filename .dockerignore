@@ -1,0 +1,15 @@
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.git
+.gitignore
+.env
+cookie.txt
+cookies.json
+douyin_users.db
+logs/
+*.log

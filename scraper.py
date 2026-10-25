@@ -13,7 +13,15 @@ from f2.apps.douyin.utils import TokenManager
 logger = logging.getLogger("douyin_scraper")
 logger.setLevel(logging.INFO)
 
-CHROME_PATH = "/snap/bin/chromium"
+def get_chromium_path() -> Optional[str]:
+    """Finds Chromium executable or returns None to use Playwright's default"""
+    env_path = os.environ.get("CHROME_PATH")
+    if env_path and Path(env_path).exists():
+        return env_path
+    for p in ["/snap/bin/chromium", "/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/google-chrome"]:
+        if Path(p).exists():
+            return p
+    return None
 
 def get_system_cookie() -> str:
     """Reads default Douyin cookie from env var, cookie.txt, or .env"""
@@ -119,16 +127,23 @@ class DouyinScraper:
     async def _get_browser(self):
         if not self.browser or not self.playwright:
             self.playwright = await async_playwright().start()
-            self.browser = await self.playwright.chromium.launch(
-                executable_path=CHROME_PATH,
-                headless=True,
-                args=[
+            launch_kwargs = {
+                "headless": True,
+                "args": [
                     "--no-sandbox",
                     "--disable-setuid-sandbox",
                     "--disable-dev-shm-usage",
                     "--disable-blink-features=AutomationControlled",
                 ],
-            )
+            }
+            chrome_path = get_chromium_path()
+            if chrome_path:
+                launch_kwargs["executable_path"] = chrome_path
+                logger.info(f"Using Chromium binary at: {chrome_path}")
+            else:
+                logger.info("Using Playwright bundled Chromium")
+
+            self.browser = await self.playwright.chromium.launch(**launch_kwargs)
         return self.browser
 
     async def get_channel_videos(
