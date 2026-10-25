@@ -134,6 +134,7 @@ class DouyinScraper:
                     "--disable-setuid-sandbox",
                     "--disable-dev-shm-usage",
                     "--disable-gpu",
+                    "--js-flags=--max-old-space-size=256",
                     "--disable-blink-features=AutomationControlled",
                 ],
             }
