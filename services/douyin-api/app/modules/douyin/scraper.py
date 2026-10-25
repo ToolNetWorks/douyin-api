@@ -81,7 +81,10 @@ def extract_raw_url(text: str) -> Optional[str]:
     match = re.search(r"https?://[^\s\"'<>]+", text)
     if match:
         return match.group(0).rstrip(".,;!?")
-    return text.strip()
+    clean = text.strip()
+    if any(clean.startswith(prefix) for prefix in ["v.douyin.com", "www.douyin.com", "douyin.com", "iesdouyin.com"]):
+        return f"https://{clean}"
+    return clean
 
 async def resolve_douyin_url(input_text: str) -> Tuple[Optional[str], Optional[str]]:
     """
@@ -104,11 +107,14 @@ async def resolve_douyin_url(input_text: str) -> Tuple[Optional[str], Optional[s
 
     # If it's a short link or redirect link
     try:
+        req_url = raw_url
+        if not req_url.startswith("http://") and not req_url.startswith("https://"):
+            req_url = f"https://{req_url}"
         async with httpx.AsyncClient(follow_redirects=True, timeout=12.0) as client:
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
             }
-            resp = await client.get(raw_url, headers=headers)
+            resp = await client.get(req_url, headers=headers)
             final_url = str(resp.url)
             
             # Check user pattern
@@ -154,12 +160,6 @@ class DouyinScraper:
                     "--disable-setuid-sandbox",
                     "--disable-dev-shm-usage",
                     "--disable-gpu",
-                    "--mute-audio",
-                    "--no-zygote",
-                    "--disable-extensions",
-                    "--disable-component-update",
-                    "--disable-background-networking",
-                    "--disable-features=Translate,BackForwardCache,MediaRouter,OptimizationHints,AudioServiceOutOfProcess",
                     "--js-flags=--max-old-space-size=256",
                     "--disable-blink-features=AutomationControlled",
                 ],
@@ -237,15 +237,6 @@ class DouyinScraper:
                 await context.add_cookies(cookie_list)
 
             page = await context.new_page()
-
-            # Abort heavy media streaming (mp4/flv/m3u8) to save RAM and avoid OOM on Render Free (512MB)
-            async def intercept_route(route):
-                if route.request.resource_type in ["media"]:
-                    await route.abort()
-                else:
-                    await route.continue_()
-            await page.route("**/*", intercept_route)
-
             stealth = Stealth()
             await stealth.apply_stealth_async(page)
 
