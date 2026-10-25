@@ -1,58 +1,78 @@
 import asyncio
 import json
-import os
-import re
 import logging
+import re
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
+
 import httpx
 from playwright.async_api import async_playwright, Browser, BrowserContext
 from playwright_stealth import Stealth
 from f2.apps.douyin.utils import TokenManager
+
+from app.core.config import settings
 
 logger = logging.getLogger("douyin_scraper")
 logger.setLevel(logging.INFO)
 
 def get_chromium_path() -> Optional[str]:
     """Finds Chromium executable or returns None to use Playwright's default"""
-    env_path = os.environ.get("CHROME_PATH")
-    if env_path and Path(env_path).exists():
-        return env_path
+    if settings.CHROME_PATH and Path(settings.CHROME_PATH).exists():
+        return settings.CHROME_PATH
     for p in ["/snap/bin/chromium", "/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/google-chrome"]:
         if Path(p).exists():
             return p
     return None
 
 def get_system_cookie() -> str:
-    """Reads default Douyin cookie from env var, cookie.txt, or .env"""
-    env_c = os.environ.get("DOUYIN_COOKIE", "").strip()
-    if env_c:
-        return env_c
+    """Reads default Douyin cookie string from env var or file search paths"""
+    if settings.COOKIE_STR:
+        return settings.COOKIE_STR
     
-    cookie_file = Path("/root/douyin/cookie.txt")
-    if cookie_file.exists():
-        try:
-            content = cookie_file.read_text(encoding="utf-8").strip()
-            if content:
-                return content
-        except Exception:
-            pass
-
-    env_file = Path("/root/douyin/.env")
-    if env_file.exists():
-        try:
-            for line in env_file.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if line.startswith("DOUYIN_COOKIE="):
-                    val = line.split("=", 1)[1].strip()
-                    if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
-                        val = val[1:-1]
-                    if val:
-                        return val
-        except Exception:
-            pass
+    for path in settings.cookie_search_paths:
+        if path.name == "cookie.txt" and path.exists():
+            try:
+                content = path.read_text(encoding="utf-8").strip()
+                if content:
+                    return content
+            except Exception:
+                pass
+        elif path.name == ".env" and path.exists():
+            try:
+                for line in path.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if line.startswith("DOUYIN_COOKIE="):
+                        val = line.split("=", 1)[1].strip()
+                        if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
+                            val = val[1:-1]
+                        if val:
+                            return val
+            except Exception:
+                pass
 
     return ""
+
+def get_structured_cookies_from_files() -> List[Dict[str, Any]]:
+    """Checks for cookies.json in search paths and parses cookie dicts"""
+    for path in settings.cookie_search_paths:
+        if path.name == "cookies.json" and path.exists():
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    raw_cookies = json.load(f)
+                cookie_list = []
+                for c in raw_cookies:
+                    if c.get("name") and c.get("value") is not None:
+                        cookie_list.append({
+                            "name": c["name"],
+                            "value": c["value"],
+                            "domain": c.get("domain", ".douyin.com"),
+                            "path": c.get("path", "/"),
+                        })
+                if cookie_list:
+                    return cookie_list
+            except Exception as e:
+                logger.warning(f"Could not load cookies from {path}: {e}")
+    return []
 
 def extract_raw_url(text: str) -> Optional[str]:
     """Extract http/https URL from user text (e.g. share texts)"""
@@ -63,7 +83,7 @@ def extract_raw_url(text: str) -> Optional[str]:
         return match.group(0).rstrip(".,;!?")
     return text.strip()
 
-async def resolve_douyin_url(input_text: str) -> tuple[Optional[str], Optional[str]]:
+async def resolve_douyin_url(input_text: str) -> Tuple[Optional[str], Optional[str]]:
     """
     Resolves input text/URL to (canonical_user_url, sec_user_id).
     Handles short links (v.douyin.com), web links, and share snippets.
@@ -122,7 +142,7 @@ class DouyinScraper:
     def __init__(self):
         self.browser: Optional[Browser] = None
         self.playwright = None
-        self._lock = asyncio.Lock()
+        self._semaphore = asyncio.Semaphore(settings.MAX_CONCURRENT_CRAWLS)
 
     async def _get_browser(self):
         if not self.browser or not self.playwright:
@@ -163,7 +183,7 @@ class DouyinScraper:
                 f"Không thể phân tích hoặc tìm thấy ID kênh Douyin hợp lệ từ link: {channel_url_or_sec_id}"
             )
 
-        async with self._lock:
+        async with self._semaphore:
             browser = await self._get_browser()
             
             context: BrowserContext = await browser.new_context(
@@ -173,25 +193,13 @@ class DouyinScraper:
             )
             
             # Prepare pre-seeded cookies
-            cookie_list = []
+            cookie_list: List[Dict[str, Any]] = []
             
-            # Check structured cookies.json first
-            if not custom_cookie and Path("/root/douyin/cookies.json").exists():
-                try:
-                    with open("/root/douyin/cookies.json", "r", encoding="utf-8") as f:
-                        raw_cookies = json.load(f)
-                    for c in raw_cookies:
-                        if c.get("name") and c.get("value") is not None:
-                            cookie_list.append({
-                                "name": c["name"],
-                                "value": c["value"],
-                                "domain": c.get("domain", ".douyin.com"),
-                                "path": c.get("path", "/"),
-                            })
-                except Exception as e:
-                    logger.warning(f"Failed to load cookies.json: {e}")
+            # 1. Structured cookies.json if no custom cookie passed
+            if not custom_cookie:
+                cookie_list = get_structured_cookies_from_files()
 
-            # Check string cookie (custom_cookie, cookie.txt, or .env)
+            # 2. String cookies (custom_cookie, cookie.txt, or .env)
             if not cookie_list:
                 effective_cookie = custom_cookie or get_system_cookie()
                 if effective_cookie:
@@ -205,7 +213,7 @@ class DouyinScraper:
                                 "path": "/",
                             })
 
-            # Always ensure basic ByteDance tokens exist if not present in custom cookie
+            # Always ensure basic ByteDance tokens exist if not present in cookies
             existing_cookie_names = {c["name"] for c in cookie_list}
             try:
                 if "ttwid" not in existing_cookie_names:
@@ -291,11 +299,10 @@ class DouyinScraper:
             try:
                 # Navigate directly to user profile
                 logger.info(f"Navigating to {canonical_url}...")
-                await page.goto(canonical_url, wait_until="commit", timeout=45000)
+                await page.goto(canonical_url, wait_until="commit", timeout=settings.PAGE_TIMEOUT_MS)
                 await asyncio.sleep(4.0)
 
                 # Trigger post request by mouse wheel
-                # Hover over the center of the scroll container
                 await page.mouse.move(640, 400)
                 await page.mouse.wheel(0, 2500)
                 try:
@@ -303,7 +310,7 @@ class DouyinScraper:
                 except asyncio.TimeoutError:
                     pass
 
-                # Also extract author nickname/works count from page DOM if not yet populated
+                # Extract author nickname/works count from page DOM if not yet populated
                 if "nickname" not in author_info:
                     try:
                         dom_info = await page.evaluate('''() => {

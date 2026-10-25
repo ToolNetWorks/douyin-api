@@ -1,49 +1,30 @@
-import os
-import asyncio
 import logging
-from typing import Optional, List, Dict, Any
-from fastapi import FastAPI, Query, HTTPException, Request, Depends, Header
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
-from pydantic import BaseModel, Field
+from fastapi.responses import HTMLResponse
 
-from scraper import DouyinScraper, resolve_douyin_url
+from app.core.config import settings
+from app.modules.douyin.router import router as douyin_router, scraper
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("douyin_api")
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    logger.info(f"Starting {settings.PROJECT_NAME} v{settings.PROJECT_VERSION}")
+    yield
+    # Shutdown
+    logger.info("Shutting down scraper and browser instances...")
+    await scraper.close()
+
 app = FastAPI(
-    title="Douyin Channel Video Scraper API",
-    description="REST API tự host để lấy toàn bộ URL video của một kênh Douyin từ link kênh (hỗ trợ cả link rút gọn v.douyin.com, link chia sẻ, link web). Không phụ thuộc bên thứ 3.",
-    version="1.0.0",
+    title=settings.PROJECT_NAME,
+    description=settings.PROJECT_DESCRIPTION,
+    version=settings.PROJECT_VERSION,
+    lifespan=lifespan,
 )
-
-API_KEY = os.environ.get("API_KEY", "").strip()
-
-def check_api_key(
-    request: Request,
-    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
-    api_key: Optional[str] = Query(None),
-):
-    """
-    Xác thực API Key nếu máy chủ có cài đặt biến môi trường API_KEY.
-    Nếu server không cài API_KEY thì bỏ qua (cho phép truy cập tự do).
-    """
-    if not API_KEY:
-        return True
-    
-    token = x_api_key or api_key
-    if not token and "authorization" in request.headers:
-        auth = request.headers["authorization"]
-        if auth.lower().startswith("bearer "):
-            token = auth[7:].strip()
-            
-    if token != API_KEY:
-        raise HTTPException(
-            status_code=401,
-            detail="Unauthorized: API Key không hợp lệ. Vui lòng truyền qua Header 'X-API-Key' hoặc Query '?api_key=...'"
-        )
-    return True
 
 # Enable CORS for all origins
 app.add_middleware(
@@ -54,156 +35,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-scraper = DouyinScraper()
+# Include modules
+app.include_router(douyin_router)
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    await scraper.close()
-
-# Request Models
-class ChannelVideosRequest(BaseModel):
-    url: str = Field(..., description="Link kênh Douyin, ví dụ https://v.douyin.com/idFqvUms/ hoặc https://www.douyin.com/user/MS4wLjABAAAA...")
-    max_count: int = Field(50, description="Số lượng video tối đa cần lấy (mặc định 50)", ge=1, le=500)
-    cookie: Optional[str] = Field(None, description="Cookie Douyin tùy chọn nếu muốn phân trang sâu hơn")
-
-class VideoItem(BaseModel):
-    id: str
-    url: str
-    title: str
-    play_url: Optional[str] = None
-    cover_url: Optional[str] = None
-    duration_seconds: float
-    width: Optional[int] = None
-    height: Optional[int] = None
-    created_time: Optional[int] = None
-    stats: Dict[str, int] = {}
-
-class AuthorInfo(BaseModel):
-    sec_uid: str
-    nickname: Optional[str] = None
-    avatar: Optional[str] = None
-    signature: Optional[str] = None
-    total_works: Optional[str] = None
-
-class ChannelVideosResponse(BaseModel):
-    success: bool
-    message: str
-    data: Dict[str, Any]
-
-@app.get("/health")
+@app.get("/health", tags=["System"])
 async def health_check():
     return {
         "status": "healthy",
         "service": "douyin-channel-scraper-api",
-        "version": "1.0.0",
+        "version": settings.PROJECT_VERSION,
         "self_hosted": True,
     }
 
-@app.post(
-    "/api/douyin/channel/videos",
-    response_model=ChannelVideosResponse,
-    tags=["Channel Full Details"],
-    summary="Lấy toàn bộ video + link MP4 tải trực tiếp + metadata (POST)",
-    dependencies=[Depends(check_api_key)]
-)
-async def get_channel_videos_post(payload: ChannelVideosRequest):
-    """
-    POST endpoint: Nhận link kênh Douyin và trả về danh sách tất cả video URLs cùng metadata (direct mp4, cover, stats).
-    """
-    if not payload.url or not payload.url.strip():
-        raise HTTPException(status_code=400, detail="Vui lòng cung cấp link kênh Douyin (url).")
-        
-    try:
-        result = await scraper.get_channel_videos(
-            channel_url_or_sec_id=payload.url,
-            max_count=payload.max_count,
-            custom_cookie=payload.cookie
-        )
-        return ChannelVideosResponse(
-            success=True,
-            message=f"Đã lấy thành công {result['total_collected']} video từ kênh Douyin.",
-            data=result,
-        )
-    except ValueError as ve:
-        raise HTTPException(status_code=400, detail=str(ve))
-    except Exception as e:
-        logger.error(f"Lỗi khi cào dữ liệu: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Lỗi nội bộ khi cào kênh: {str(e)}")
-
-@app.get(
-    "/api/douyin/channel/videos",
-    response_model=ChannelVideosResponse,
-    tags=["Channel Full Details"],
-    summary="Lấy toàn bộ video + link MP4 tải trực tiếp + metadata (GET)",
-    dependencies=[Depends(check_api_key)]
-)
-async def get_channel_videos_get(
-    url: str = Query(..., description="Link kênh Douyin"),
-    max_count: int = Query(50, ge=1, le=500, description="Số lượng video tối đa"),
-    cookie: Optional[str] = Query(None, description="Cookie tùy chọn")
-):
-    """
-    GET endpoint: Thuận tiện gọi nhanh qua URL query params.
-    """
-    payload = ChannelVideosRequest(url=url, max_count=max_count, cookie=cookie)
-    return await get_channel_videos_post(payload)
-
-@app.post(
-    "/api/douyin/video/urls",
-    tags=["Video URLs"],
-    summary="Chỉ lấy danh sách URL video (POST - Tối giản cho Bot / Script)",
-    dependencies=[Depends(check_api_key)]
-)
-async def get_video_urls_only_post(payload: ChannelVideosRequest):
-    """
-    POST endpoint tối giản: Chỉ trả về danh sách URL video (dạng `https://www.douyin.com/video/...`).
-    """
-    if not payload.url or not payload.url.strip():
-        raise HTTPException(status_code=400, detail="Vui lòng cung cấp link kênh Douyin (url).")
-    try:
-        result = await scraper.get_channel_videos(
-            channel_url_or_sec_id=payload.url,
-            max_count=payload.max_count,
-            custom_cookie=payload.cookie
-        )
-        return {
-            "success": True,
-            "total": result["total_collected"],
-            "sec_user_id": result["sec_user_id"],
-            "video_urls": result["video_urls"]
-        }
-    except Exception as e:
-        logger.error(f"Lỗi khi cào URL video: {e}", exc_info=True)
-        raise HTTPException(status_code=400, detail=str(e))
-
-@app.get(
-    "/api/douyin/video/urls",
-    tags=["Video URLs"],
-    summary="Chỉ lấy danh sách URL video (GET - Gọi nhanh qua URL)",
-    dependencies=[Depends(check_api_key)]
-)
-async def get_video_urls_only(
-    url: str = Query(..., description="Link kênh Douyin"),
-    max_count: int = Query(50, ge=1, le=500)
-):
-    """
-    Endpoint tối giản: Chỉ trả về danh sách URL video để tích hợp vào script/tool khác.
-    """
-    try:
-        result = await scraper.get_channel_videos(
-            channel_url_or_sec_id=url,
-            max_count=max_count
-        )
-        return {
-            "success": True,
-            "total": result["total_collected"],
-            "sec_user_id": result["sec_user_id"],
-            "video_urls": result["video_urls"]
-        }
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-@app.get("/", response_class=HTMLResponse)
+@app.get("/", response_class=HTMLResponse, tags=["Dashboard"])
 async def home():
     """
     Giao diện web trực quan để test và gọi API trực tiếp trên trình duyệt.
@@ -415,4 +259,4 @@ async def home():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8088, reload=False)
+    uvicorn.run("app.main:app", host=settings.HOST, port=settings.PORT, reload=False)
