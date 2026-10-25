@@ -21,19 +21,26 @@ def check_api_key(
     api_key: Optional[str] = Query(None),
 ):
     """
-    Xác thực API Key nếu máy chủ có cài đặt biến môi trường API_KEY.
-    Nếu server không cài API_KEY thì bỏ qua (cho phép truy cập tự do).
+    Xác thực API Key:
+    - Hỗ trợ key cấu hình trong ENV `API_KEY` (hỗ trợ nhiều key cách nhau bằng dấu phẩy).
+    - Hỗ trợ key tạm dùng để test: `douyin_test_2026`.
+    - Nếu server không cài API_KEY thì cho phép truy cập tự do.
     """
-    if not settings.API_KEY:
+    allowed_keys = {"douyin_test_2026"}
+    if settings.API_KEY:
+        for k in settings.API_KEY.split(","):
+            if k.strip():
+                allowed_keys.add(k.strip())
+    else:
         return True
-    
+
     token = x_api_key or api_key
     if not token and "authorization" in request.headers:
         auth = request.headers["authorization"]
         if auth.lower().startswith("bearer "):
             token = auth[7:].strip()
             
-    if token != settings.API_KEY:
+    if token not in allowed_keys:
         raise HTTPException(
             status_code=401,
             detail="Unauthorized: API Key không hợp lệ. Vui lòng truyền qua Header 'X-API-Key' hoặc Query '?api_key=...'"
