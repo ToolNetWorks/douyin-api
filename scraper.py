@@ -133,6 +133,7 @@ class DouyinScraper:
                     "--no-sandbox",
                     "--disable-setuid-sandbox",
                     "--disable-dev-shm-usage",
+                    "--disable-gpu",
                     "--disable-blink-features=AutomationControlled",
                 ],
             }
@@ -289,8 +290,8 @@ class DouyinScraper:
             try:
                 # Navigate directly to user profile
                 logger.info(f"Navigating to {canonical_url}...")
-                await page.goto(canonical_url, wait_until="domcontentloaded", timeout=20000)
-                await asyncio.sleep(3.5)
+                await page.goto(canonical_url, wait_until="commit", timeout=45000)
+                await asyncio.sleep(4.0)
 
                 # Trigger post request by mouse wheel
                 # Hover over the center of the scroll container

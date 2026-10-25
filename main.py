@@ -2,7 +2,7 @@ import os
 import asyncio
 import logging
 from typing import Optional, List, Dict, Any
-from fastapi import FastAPI, Query, HTTPException, Request
+from fastapi import FastAPI, Query, HTTPException, Request, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
@@ -17,6 +17,33 @@ app = FastAPI(
     description="REST API tự host để lấy toàn bộ URL video của một kênh Douyin từ link kênh (hỗ trợ cả link rút gọn v.douyin.com, link chia sẻ, link web). Không phụ thuộc bên thứ 3.",
     version="1.0.0",
 )
+
+API_KEY = os.environ.get("API_KEY", "").strip()
+
+def check_api_key(
+    request: Request,
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+    api_key: Optional[str] = Query(None),
+):
+    """
+    Xác thực API Key nếu máy chủ có cài đặt biến môi trường API_KEY.
+    Nếu server không cài API_KEY thì bỏ qua (cho phép truy cập tự do).
+    """
+    if not API_KEY:
+        return True
+    
+    token = x_api_key or api_key
+    if not token and "authorization" in request.headers:
+        auth = request.headers["authorization"]
+        if auth.lower().startswith("bearer "):
+            token = auth[7:].strip()
+            
+    if token != API_KEY:
+        raise HTTPException(
+            status_code=401,
+            detail="Unauthorized: API Key không hợp lệ. Vui lòng truyền qua Header 'X-API-Key' hoặc Query '?api_key=...'"
+        )
+    return True
 
 # Enable CORS for all origins
 app.add_middleware(
@@ -76,7 +103,8 @@ async def health_check():
     "/api/douyin/channel/videos",
     response_model=ChannelVideosResponse,
     tags=["Channel Full Details"],
-    summary="Lấy toàn bộ video + link MP4 tải trực tiếp + metadata (POST)"
+    summary="Lấy toàn bộ video + link MP4 tải trực tiếp + metadata (POST)",
+    dependencies=[Depends(check_api_key)]
 )
 async def get_channel_videos_post(payload: ChannelVideosRequest):
     """
@@ -106,7 +134,8 @@ async def get_channel_videos_post(payload: ChannelVideosRequest):
     "/api/douyin/channel/videos",
     response_model=ChannelVideosResponse,
     tags=["Channel Full Details"],
-    summary="Lấy toàn bộ video + link MP4 tải trực tiếp + metadata (GET)"
+    summary="Lấy toàn bộ video + link MP4 tải trực tiếp + metadata (GET)",
+    dependencies=[Depends(check_api_key)]
 )
 async def get_channel_videos_get(
     url: str = Query(..., description="Link kênh Douyin"),
@@ -122,7 +151,8 @@ async def get_channel_videos_get(
 @app.post(
     "/api/douyin/video/urls",
     tags=["Video URLs"],
-    summary="Chỉ lấy danh sách URL video (POST - Tối giản cho Bot / Script)"
+    summary="Chỉ lấy danh sách URL video (POST - Tối giản cho Bot / Script)",
+    dependencies=[Depends(check_api_key)]
 )
 async def get_video_urls_only_post(payload: ChannelVideosRequest):
     """
@@ -149,7 +179,8 @@ async def get_video_urls_only_post(payload: ChannelVideosRequest):
 @app.get(
     "/api/douyin/video/urls",
     tags=["Video URLs"],
-    summary="Chỉ lấy danh sách URL video (GET - Gọi nhanh qua URL)"
+    summary="Chỉ lấy danh sách URL video (GET - Gọi nhanh qua URL)",
+    dependencies=[Depends(check_api_key)]
 )
 async def get_video_urls_only(
     url: str = Query(..., description="Link kênh Douyin"),
