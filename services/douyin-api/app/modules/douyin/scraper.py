@@ -151,8 +151,15 @@ class DouyinScraper:
         self._semaphore = asyncio.Semaphore(settings.MAX_CONCURRENT_CRAWLS)
 
     async def _get_browser(self):
-        if not self.browser or not self.playwright:
-            self.playwright = await async_playwright().start()
+        if not self.browser or not self.playwright or not self.browser.is_connected():
+            if self.browser:
+                try:
+                    await self.browser.close()
+                except Exception:
+                    pass
+                self.browser = None
+            if not self.playwright:
+                self.playwright = await async_playwright().start()
             launch_kwargs = {
                 "headless": True,
                 "args": [
@@ -160,6 +167,12 @@ class DouyinScraper:
                     "--disable-setuid-sandbox",
                     "--disable-dev-shm-usage",
                     "--disable-gpu",
+                    "--mute-audio",
+                    "--no-zygote",
+                    "--disable-extensions",
+                    "--disable-component-update",
+                    "--disable-background-networking",
+                    "--disable-features=Translate,BackForwardCache,MediaRouter,OptimizationHints,AudioServiceOutOfProcess",
                     "--js-flags=--max-old-space-size=256",
                     "--disable-blink-features=AutomationControlled",
                 ],
@@ -237,6 +250,15 @@ class DouyinScraper:
                 await context.add_cookies(cookie_list)
 
             page = await context.new_page()
+
+            # Abort heavy media streaming (mp4/flv/m3u8) to save RAM and avoid OOM
+            async def intercept_route(route):
+                if route.request.resource_type in ["media"]:
+                    await route.abort()
+                else:
+                    await route.continue_()
+            await page.route("**/*", intercept_route)
+
             stealth = Stealth()
             await stealth.apply_stealth_async(page)
 
@@ -340,16 +362,25 @@ class DouyinScraper:
                 scroll_count = 0
                 consecutive_misses = 0
                 max_scrolls = max(10, (max_count // 15) + 5)
+                start_loop_time = asyncio.get_event_loop().time()
                 while len(videos_dict) < max_count and scroll_count < max_scrolls and has_more:
+                    if asyncio.get_event_loop().time() - start_loop_time > 40.0:
+                        logger.info("Scrape loop safety timeout reached (40s). Returning collected videos.")
+                        break
+
                     prev_count = len(videos_dict)
                     post_event.clear()
+                    scroll_count += 1
                     
                     # Scroll via both mouse wheel and container.scrollTop
                     await page.mouse.wheel(0, 3500)
-                    await page.evaluate('''() => {
-                        const sc = document.querySelector('.route-scroll-container') || document.querySelector('[class*="route-scroll"]');
-                        if (sc) sc.scrollTop = sc.scrollHeight;
-                    }''')
+                    try:
+                        await page.evaluate('''() => {
+                            const sc = document.querySelector('.route-scroll-container') || document.querySelector('[class*="route-scroll"]');
+                            if (sc) sc.scrollTop = sc.scrollHeight;
+                        }''')
+                    except Exception as e:
+                        logger.debug(f"Scroll evaluate error: {e}")
                     
                     try:
                         await asyncio.wait_for(post_event.wait(), timeout=7.0)
@@ -366,7 +397,6 @@ class DouyinScraper:
                     else:
                         consecutive_misses = 0
 
-                    scroll_count += 1
                     await asyncio.sleep(1.2)
 
             finally:
