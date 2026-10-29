@@ -1,5 +1,7 @@
 import logging
-from typing import Optional
+import os
+from typing import Optional, Dict, Any
+import httpx
 from fastapi import APIRouter, Query, HTTPException, Request, Depends, Header
 
 from app.core.config import settings
@@ -47,6 +49,31 @@ def check_api_key(
         )
     return True
 
+async def call_scraper_or_upstream(payload: ChannelVideosRequest) -> Dict[str, Any]:
+    upstream_url = os.environ.get("UPSTREAM_URL", "").strip().rstrip("/")
+    if upstream_url:
+        logger.info(f"Forwarding scrape request to upstream VPS: {upstream_url}")
+        try:
+            async with httpx.AsyncClient(timeout=85.0) as client:
+                resp = await client.post(
+                    f"{upstream_url}/api/douyin/channel/videos",
+                    json={"url": payload.url, "max_count": payload.max_count, "cookie": payload.cookie},
+                    headers={"X-API-Key": "douyin_test_2026"}
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    return data.get("data", data)
+                else:
+                    logger.warning(f"Upstream returned status {resp.status_code}: {resp.text[:200]}")
+        except Exception as e:
+            logger.error(f"Failed to forward to upstream: {e}, falling back to local scraper")
+
+    return await scraper.get_channel_videos(
+        channel_url_or_sec_id=payload.url,
+        max_count=payload.max_count,
+        custom_cookie=payload.cookie
+    )
+
 @router.post(
     "/channel/videos",
     response_model=ChannelVideosResponse,
@@ -62,11 +89,7 @@ async def get_channel_videos_post(payload: ChannelVideosRequest):
         raise HTTPException(status_code=400, detail="Vui lòng cung cấp link kênh Douyin (url).")
         
     try:
-        result = await scraper.get_channel_videos(
-            channel_url_or_sec_id=payload.url,
-            max_count=payload.max_count,
-            custom_cookie=payload.cookie
-        )
+        result = await call_scraper_or_upstream(payload)
         return ChannelVideosResponse(
             success=True,
             message=f"Đã lấy thành công {result['total_collected']} video từ kênh Douyin.",
@@ -110,11 +133,7 @@ async def get_video_urls_only_post(payload: ChannelVideosRequest):
     if not payload.url or not payload.url.strip():
         raise HTTPException(status_code=400, detail="Vui lòng cung cấp link kênh Douyin (url).")
     try:
-        result = await scraper.get_channel_videos(
-            channel_url_or_sec_id=payload.url,
-            max_count=payload.max_count,
-            custom_cookie=payload.cookie
-        )
+        result = await call_scraper_or_upstream(payload)
         return VideoUrlsOnlyResponse(
             success=True,
             total=result["total_collected"],
