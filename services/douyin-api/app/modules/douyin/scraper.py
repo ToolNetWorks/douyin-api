@@ -233,48 +233,54 @@ class DouyinScraper:
                 locale="zh-CN",
             )
             
+            # Filter out stale, expired or device-mismatch tokens from cookies
+            stale_or_device_tokens = {
+                "msToken", "ttwid", "__ac_nonce", "__ac_signature",
+                "dy_swidth", "dy_sheight", "device_web_cpu_core", "device_web_memory_size",
+                "bd-web-sign-page-guard", "stream_recommend_feed_params", "stream_player_status_params"
+            }
+
             # Prepare pre-seeded cookies
-            cookie_list: List[Dict[str, Any]] = []
+            raw_cookie_list: List[Dict[str, Any]] = []
             
             # 1. Structured cookies.json if no custom cookie passed
             if not custom_cookie:
-                cookie_list = get_structured_cookies_from_files()
+                raw_cookie_list = get_structured_cookies_from_files()
 
             # 2. String cookies (custom_cookie, cookie.txt, or .env)
-            if not cookie_list:
+            if not raw_cookie_list:
                 effective_cookie = custom_cookie or get_system_cookie()
                 if effective_cookie:
                     www_cookie_names = {
-                        "web_sign_token", "s_v_web_id", "dy_swidth", "dy_sheight",
-                        "bd_ticket_guard_web_domain", "__ac_nonce", "__ac_signature",
-                        "douyin.com", "device_web_cpu_core", "device_web_memory_size",
-                        "bd_ticket_guard_core_version", "bd-web-sign-page-guard"
+                        "web_sign_token", "s_v_web_id",
+                        "bd_ticket_guard_web_domain",
+                        "douyin.com",
+                        "bd_ticket_guard_core_version"
                     }
                     for part in effective_cookie.split(";"):
                         if "=" in part:
                             name, val = part.strip().split("=", 1)
                             clean_name = name.strip()
                             domain = "www.douyin.com" if clean_name in www_cookie_names else ".douyin.com"
-                            cookie_list.append({
+                            raw_cookie_list.append({
                                 "name": clean_name,
                                 "value": val.strip(),
                                 "domain": domain,
                                 "path": "/",
                             })
 
-            # Always ensure basic ByteDance tokens exist if not present in cookies
-            existing_cookie_names = {c["name"] for c in cookie_list}
+            # Filter out stale tokens
+            cookie_list = [c for c in raw_cookie_list if c.get("name") not in stale_or_device_tokens]
+
+            # Always generate fresh dynamic tokens for this session
             try:
-                if "ttwid" not in existing_cookie_names:
-                    ttwid = TokenManager.gen_ttwid()
-                    cookie_list.append({"name": "ttwid", "value": ttwid, "domain": ".douyin.com", "path": "/"})
-                if "msToken" not in existing_cookie_names:
-                    ms_token = TokenManager.gen_real_msToken()
-                    cookie_list.append({"name": "msToken", "value": ms_token, "domain": ".douyin.com", "path": "/"})
-                if "enter_pc_once" not in existing_cookie_names:
-                    cookie_list.append({"name": "enter_pc_once", "value": "1", "domain": ".douyin.com", "path": "/"})
+                fresh_ttwid = TokenManager.gen_ttwid()
+                cookie_list.append({"name": "ttwid", "value": fresh_ttwid, "domain": ".douyin.com", "path": "/"})
+                fresh_mstoken = TokenManager.gen_real_msToken()
+                cookie_list.append({"name": "msToken", "value": fresh_mstoken, "domain": ".douyin.com", "path": "/"})
+                cookie_list.append({"name": "enter_pc_once", "value": "1", "domain": ".douyin.com", "path": "/"})
             except Exception as e:
-                logger.warning(f"Could not pre-generate tokens: {e}")
+                logger.warning(f"Could not generate fresh dynamic tokens: {e}")
 
             if cookie_list:
                 await context.add_cookies(cookie_list)
