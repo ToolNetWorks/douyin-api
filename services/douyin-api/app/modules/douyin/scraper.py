@@ -358,11 +358,12 @@ class DouyinScraper:
                 # Navigate directly to user profile
                 logger.info(f"Navigating to {canonical_url}...")
                 await page.goto(canonical_url, wait_until="commit", timeout=settings.PAGE_TIMEOUT_MS)
-                await asyncio.sleep(4.0)
+                # Allow Douyin SecSDK and cryptographic scripts to initialize fully
+                await asyncio.sleep(10.0)
 
                 # Trigger post request by mouse wheel
                 await page.mouse.move(640, 400)
-                await page.mouse.wheel(0, 2500)
+                await page.mouse.wheel(0, 3000)
                 try:
                     await asyncio.wait_for(post_event.wait(), timeout=9.0)
                 except asyncio.TimeoutError:
