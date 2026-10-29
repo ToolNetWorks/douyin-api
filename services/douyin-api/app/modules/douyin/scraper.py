@@ -53,7 +53,28 @@ def get_system_cookie() -> str:
     return ""
 
 def get_structured_cookies_from_files() -> List[Dict[str, Any]]:
-    """Checks for cookies.json in search paths and parses cookie dicts"""
+    """Checks for DOUYIN_COOKIES_JSON in env or cookies.json in search paths and parses cookie dicts"""
+    raw_env_json = os.environ.get("DOUYIN_COOKIES_JSON", "").strip()
+    if raw_env_json:
+        try:
+            parsed = json.loads(raw_env_json)
+            if isinstance(parsed, dict) and "cookies" in parsed:
+                parsed = parsed["cookies"]
+            if isinstance(parsed, list):
+                cookie_list = []
+                for c in parsed:
+                    if c.get("name") and c.get("value") is not None:
+                        cookie_list.append({
+                            "name": c["name"],
+                            "value": c["value"],
+                            "domain": c.get("domain", ".douyin.com"),
+                            "path": c.get("path", "/"),
+                        })
+                if cookie_list:
+                    return cookie_list
+        except Exception as e:
+            logger.warning(f"Could not load cookies from DOUYIN_COOKIES_JSON: {e}")
+
     for path in settings.cookie_search_paths:
         if path.name == "cookies.json" and path.exists():
             try:
@@ -222,13 +243,21 @@ class DouyinScraper:
             if not cookie_list:
                 effective_cookie = custom_cookie or get_system_cookie()
                 if effective_cookie:
+                    www_cookie_names = {
+                        "web_sign_token", "s_v_web_id", "dy_swidth", "dy_sheight",
+                        "bd_ticket_guard_web_domain", "__ac_nonce", "__ac_signature",
+                        "douyin.com", "device_web_cpu_core", "device_web_memory_size",
+                        "bd_ticket_guard_core_version", "bd-web-sign-page-guard"
+                    }
                     for part in effective_cookie.split(";"):
                         if "=" in part:
                             name, val = part.strip().split("=", 1)
+                            clean_name = name.strip()
+                            domain = "www.douyin.com" if clean_name in www_cookie_names else ".douyin.com"
                             cookie_list.append({
-                                "name": name.strip(),
+                                "name": clean_name,
                                 "value": val.strip(),
-                                "domain": ".douyin.com",
+                                "domain": domain,
                                 "path": "/",
                             })
 
