@@ -296,9 +296,13 @@ class DouyinScraper:
             author_info: Dict[str, Any] = {"sec_uid": sec_user_id}
             has_more = True
             post_event = asyncio.Event()
+            debug_events: List[Dict[str, Any]] = []
 
             async def on_response(res):
                 nonlocal has_more
+                if any(k in res.url for k in ["aweme/post", "web/aweme", "captcha", "verify", "security"]):
+                    debug_events.append({"status": res.status, "url": res.url[:140]})
+
                 if "aweme/post" in res.url:
                     logger.info(f"aweme/post response intercepted: status={res.status}")
                     try:
@@ -430,6 +434,20 @@ class DouyinScraper:
 
                     await asyncio.sleep(1.2)
 
+                debug_dom = None
+                if not videos_dict:
+                    try:
+                        debug_dom = await page.evaluate('''() => {
+                            return {
+                                title: document.title,
+                                current_url: window.location.href,
+                                has_captcha: Boolean(document.querySelector('#captcha_container, [class*="captcha"], [class*="verify"], [id*="verify"]')),
+                                body_preview: document.body ? document.body.innerText.slice(0, 300) : ''
+                            };
+                        }''')
+                    except Exception as e:
+                        debug_dom = {"eval_error": str(e)}
+
             finally:
                 await context.close()
 
@@ -445,6 +463,10 @@ class DouyinScraper:
                 "has_more": has_more,
                 "video_urls": [v["url"] for v in video_list],
                 "videos": video_list,
+                "debug_info": {
+                    "events": debug_events[-15:],
+                    "dom": debug_dom
+                }
             }
 
     async def close(self):
