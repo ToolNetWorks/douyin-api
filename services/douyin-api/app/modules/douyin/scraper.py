@@ -1,4 +1,5 @@
 import asyncio
+import gc
 import json
 import logging
 import os
@@ -190,13 +191,7 @@ class DouyinScraper:
                     "--disable-dev-shm-usage",
                     "--disable-gpu",
                     "--mute-audio",
-                    "--no-zygote",
-                    "--disable-extensions",
-                    "--disable-component-update",
-                    "--disable-background-networking",
-                    "--disable-features=Translate,BackForwardCache,MediaRouter,OptimizationHints,AudioServiceOutOfProcess",
-                    "--js-flags=--max-old-space-size=256",
-                    "--disable-blink-features=AutomationControlled",
+                    "--disk-cache-size=10485760",
                 ],
             }
             chrome_path = get_chromium_path()
@@ -229,7 +224,7 @@ class DouyinScraper:
             
             context: BrowserContext = await browser.new_context(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
-                viewport={"width": 1280, "height": 800},
+                viewport={"width": 1280, "height": 720},
                 locale="zh-CN",
             )
             
@@ -447,7 +442,12 @@ class DouyinScraper:
                         debug_dom = {"eval_error": str(e)}
 
             finally:
-                await context.close()
+                try:
+                    await context.close()
+                except Exception:
+                    pass
+                await self.close()
+                gc.collect()
 
             video_list = list(videos_dict.values())
             if max_count > 0:
@@ -469,8 +469,15 @@ class DouyinScraper:
 
     async def close(self):
         if self.browser:
-            await self.browser.close()
+            try:
+                await self.browser.close()
+            except Exception:
+                pass
             self.browser = None
         if self.playwright:
-            await self.playwright.stop()
+            try:
+                await self.playwright.stop()
+            except Exception:
+                pass
+            self.playwright = None
             self.playwright = None
