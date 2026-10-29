@@ -287,14 +287,6 @@ class DouyinScraper:
 
             page = await context.new_page()
 
-            # Abort heavy media streaming (mp4/flv/m3u8) to save RAM and avoid OOM
-            async def intercept_route(route):
-                if route.request.resource_type in ["media"]:
-                    await route.abort()
-                else:
-                    await route.continue_()
-            await page.route("**/*", intercept_route)
-
             stealth = Stealth()
             await stealth.apply_stealth_async(page)
 
